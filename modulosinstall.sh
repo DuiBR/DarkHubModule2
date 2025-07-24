@@ -66,16 +66,26 @@ if [ -n "$socket_pids" ]; then
     done
 fi
 
-# Verifica argumentos
-if [ $# -ne 4 ]; then
-    log_message "❌ Uso: $0 <dominios> <porta> <servertoken> <ipaceito>"
-    exit 1
-fi
+# ===== MODIFICAÇÃO AQUI =====
+# Valores padrão
+domains_default="localhost"
+port_default="3000"
+server_token_default="meu_token_padrao"
+ipaceito_default="127.0.0.1"
 
-domains=$1
-port=$2
-server_token=$3
-ipaceito=$4
+# Atribuição com valores padrão se não fornecidos
+domains=${1:-$domains_default}
+port=${2:-$port_default}
+server_token=${3:-$server_token_default}
+ipaceito=${4:-$ipaceito_default}
+
+# Log das configurações
+log_header "Configurações"
+log_message "🌐 Domínios: $domains"
+log_message "🔌 Porta: $port"
+log_message "🔑 Server Token: $server_token"
+log_message "📡 IP Aceito: $ipaceito"
+# ===== FIM DA MODIFICAÇÃO =====
 
 # === NOVA PARTE - DOWNLOAD DOS ARQUIVOS ===
 log_header "Baixando arquivos necessários"
