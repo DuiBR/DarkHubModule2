@@ -66,16 +66,17 @@ if [ -n "$socket_pids" ]; then
     done
 fi
 
-# Verifica argumentos
-if [ $# -ne 4 ]; then
-    log_message "❌ Uso: $0 <dominios> <porta> <servertoken> <ipaceito>"
-    exit 1
-fi
+# Valores padrão
+default_domains="localhost"
+default_port="3000"
+default_servertoken="meu_token_padrao"
+default_ipaceito="127.0.0.1"
 
-domains=$1
-port=$2
-server_token=$3
-ipaceito=$4
+# Atribuir valores dos argumentos ou padrões
+domains=${1:-$default_domains}
+port=${2:-$default_port}
+server_token=${3:-$default_servertoken}
+ipaceito=${4:-$default_ipaceito}
 
 # Remove domínios antigos do hosts
 log_header "Atualizando arquivos de hosts"
