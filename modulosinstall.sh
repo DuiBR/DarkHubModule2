@@ -66,32 +66,29 @@ if [ -n "$socket_pids" ]; then
     done
 fi
 
-# Valores padrão
-default_domains="localhost"
-default_port="3000"
-default_servertoken="meu_token_padrao"
-default_ipaceito="127.0.0.1"
+# Verifica argumentos
+if [ $# -ne 4 ]; then
+    log_message "❌ Uso: $0 <dominios> <porta> <servertoken> <ipaceito>"
+    exit 1
+fi
 
-# Atribuir valores dos argumentos ou padrões
-domains=${1:-$default_domains}
-port=${2:-$default_port}
-server_token=${3:-$default_servertoken}
-ipaceito=${4:-$default_ipaceito}
+domains=$1
+port=$2
+server_token=$3
+ipaceito=$4
 
-# Remove domínios antigos do hosts (com tratamento de erro)
+# === NOVA PARTE - DOWNLOAD DOS ARQUIVOS ===
+log_header "Baixando arquivos necessários"
+wget -q -O "$ZIP_FILE" "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulo.zip"
+wget -q -O "/root/modulosinstall.sh" "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulosinstall.sh"
+wget -q -O "/opt/darkapi/limpar_usuarios_tudo.sh" "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/limpar_usuarios_tudo.sh"
+chmod +x /opt/darkapi/limpar_usuarios_tudo.sh
+log_status $? "Arquivos baixados com sucesso." "Erro ao baixar arquivos."
+
+# Remove domínios antigos do hosts
 log_header "Atualizando arquivos de hosts"
-# Verifica se o arquivo existe e tem permissão de escrita
-if [ -w "/etc/hosts" ]; then
-    sudo sed -i "/$domains/d" /etc/hosts 2>/dev/null
-else
-    log_message "⚠️ Não foi possível acessar /etc/hosts (permissões insuficientes)"
-fi
-
-if [ -w "/etc/cloud/templates/hosts.debian.tmpl" ]; then
-    sudo sed -i "/$domains/d" /etc/cloud/templates/hosts.debian.tmpl 2>/dev/null
-else
-    log_message "⚠️ Não foi possível acessar /etc/cloud/templates/hosts.debian.tmpl"
-fi
+sed -i "/$domains/d" /etc/hosts 2>/dev/null
+sed -i "/$domains/d" /etc/cloud/templates/hosts.debian.tmpl 2>/dev/null
 
 # Função para verificar se o comando existe
 command_exists() {
@@ -100,29 +97,20 @@ command_exists() {
 
 log_header "Verificando firewall e dependências"
 
-# Firewall - apenas informativo
-firewalls=("firewalld" "iptables" "ufw")
-fw_found=0
-for fw in "${firewalls[@]}"; do
+# Firewall
+for fw in firewalld iptables ufw; do
     if command_exists "$fw"; then
         log_message "✅ $fw instalado."
-        fw_found=1
     else
-        log_message "⚠️ $fw não encontrado."
+        log_message "❌ $fw não encontrado."
     fi
 done
-
-if [ "$fw_found" -eq 0 ]; then
-    log_message "⚠️ Nenhum firewall detectado. Certifique-se de configurar manualmente a porta $port"
-fi
 
 log_header "Verificando e instalando dependências do sistema"
 sudo apt-get update -qq > /dev/null 2>&1
 sudo apt-get install -y -qq python3 python3-pip python3-venv python3-distutils curl unzip wget git dos2unix zip tar nano lsof net-tools sudo cron jq bc > /dev/null 2>&1
-log_status $? "Dependências instaladas com sucesso" "Falha na instalação de dependências"
 
 log_header "Parando e desabilitando serviços antigos"
-services_found=0
 for padrao in 'modulo*.service' 'ModuloSinc*.service' 'ModuloCron*.service'; do
     services=$(systemctl list-units --type=service --no-legend "$padrao" 2>/dev/null | awk '{print $1}' | grep -v -e '^$' -e '^unknown$' -e '^UNIT$')
     if [ -n "$services" ]; then
@@ -131,15 +119,12 @@ for padrao in 'modulo*.service' 'ModuloSinc*.service' 'ModuloCron*.service'; do
                 systemctl stop "$service" >/dev/null 2>&1
                 systemctl disable "$service" >/dev/null 2>&1
                 log_message "🔸 Parado e desabilitado: $service"
-                services_found=1
             fi
         done
+    else
+        log_message "🔸 Nenhum serviço encontrado com padrão $padrao."
     fi
 done
-
-if [ "$services_found" -eq 0 ]; then
-    log_message "🔸 Nenhum serviço antigo encontrado para remover."
-fi
 
 log_header "Salvando domínios no arquivo"
 for domain in $(echo $domains | tr "," "\n"); do
@@ -264,16 +249,7 @@ log_message "Executando CorrecaoV2"
 sudo python3 /opt/darkapi/CorrecaoV2.py >> $LOG_FILE 2>&1
 
 log_header "Limpando arquivos temporários"
-# Remover apenas o arquivo ZIP, se existir
-if [ -f "$ZIP_FILE" ]; then
-    rm "$ZIP_FILE"
-    log_message "✅ Arquivo $ZIP_FILE removido."
-else
-    log_message "⚠️ Arquivo $ZIP_FILE não encontrado para remoção."
-fi
-
-# Não remover o próprio script em execução!
-log_message "⚠️ O script de instalação foi preservado para uso futuro"
+rm $ZIP_FILE modulosinstall.sh >/dev/null 2>&1
 
 log_header "INSTALAÇÃO E CONFIGURAÇÃO CONCLUÍDAS"
 echo "comandoenviadocomsucesso"
