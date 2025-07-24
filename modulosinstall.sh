@@ -141,4 +141,139 @@ if [ "$services_found" -eq 0 ]; then
     log_message "🔸 Nenhum serviço antigo encontrado para remover."
 fi
 
-# Restante do script permanece igual...
+log_header "Salvando domínios no arquivo"
+for domain in $(echo $domains | tr "," "\n"); do
+    if ! grep -qx "$domain" "$DOMAINS_FILE"; then
+        echo "$domain" >> "$DOMAINS_FILE"
+        log_message "🌐 Domínio adicionado: $domain"
+    else
+        log_message "🌐 Domínio já existe: $domain"
+    fi
+done
+
+log_header "Configurando firewall para a porta $port (TCP/UDP)"
+if command_exists firewall-cmd; then
+    sudo firewall-cmd --zone=public --add-port=${port}/tcp --permanent >/dev/null 2>&1
+    sudo firewall-cmd --zone=public --add-port=${port}/udp --permanent >/dev/null 2>&1
+    sudo firewall-cmd --reload >/dev/null 2>&1
+    log_status $? "firewalld atualizado!" "Falha no firewalld."
+fi
+
+if command_exists iptables; then
+    sudo iptables -D INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1
+    sudo iptables -D INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1
+    sudo iptables -A INPUT -p tcp --dport "$port" -j ACCEPT >/dev/null 2>&1
+    sudo iptables -A INPUT -p udp --dport "$port" -j ACCEPT >/dev/null 2>&1
+    sudo iptables-save | sudo tee /etc/iptables/rules.v4 >/dev/null 2>&1
+    if systemctl list-units --type=service | grep -qw netfilter-persistent; then
+        sudo systemctl reload netfilter-persistent >/dev/null 2>&1
+    fi
+    log_status $? "iptables atualizado!" "Falha ao atualizar iptables."
+fi
+
+if command_exists ufw; then
+    sudo ufw allow $port/tcp >/dev/null 2>&1
+    sudo ufw allow $port/udp >/dev/null 2>&1
+    sudo ufw reload >/dev/null 2>&1
+    log_status $? "ufw atualizado!" "Falha ao atualizar ufw."
+fi
+
+log_header "Descompactando módulos"
+if [ -f "$ZIP_FILE" ]; then
+    unzip -o "$ZIP_FILE" -d /opt/darkapi/ >/dev/null 2>&1
+    log_status $? "Módulos descompactados com sucesso." "Erro ao descompactar módulos."
+else
+    log_message "❌ Arquivo $ZIP_FILE não encontrado. Abortando."
+    exit 1
+fi
+
+echo '{"comandos_proibidos": ["rm", "dd", "mkfs", "poweroff", "init", "reboot", "shutdown", "useradd", "passwd", "chpasswd", "usermod", "adduser", "groupadd", "chown", "chmod", "perl", "php", "systemctl", "visudo", "scp", "nc", "ncat", "socat"]}' > /opt/darkapi/comandos_bloqueados.json
+echo '{"ips": ["127.0.0.1", "'$ipaceito'"]}' > /opt/darkapi/ips_autorizados.json
+
+cat << EOF > /etc/systemd/system/ModuloSinc.service
+[Unit]
+Description=ModuloSinc UDP Server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/darkapi/ModuloSinc $server_token $port
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat << EOF > /etc/systemd/system/ModuloCron.service
+[Unit]
+Description=Modulo Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/bin/bash /opt/darkapi/ModuloCron.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat << EOF > /opt/darkapi/ModuloCron.sh
+#!/bin/bash
+
+DOMS="/opt/darkapi/dominios.txt"
+while read -r domain; do
+  while true; do
+    curl -s --ipv4 -X POST \
+      -H "Host: \$domain" \
+      -d "servertoken=$server_token" \
+      "http://$ipaceito/crons.php" > /dev/null
+    sleep 3
+  done &
+done < \$DOMS
+wait
+EOF
+
+log_header "Aplicando dos2unix em todos os arquivos"
+if command_exists dos2unix; then
+    find /opt/darkapi -type f -exec dos2unix {} \; >/dev/null 2>&1
+    log_status $? "Conversão dos2unix aplicada com sucesso." "Erro: dos2unix não está instalado."
+else
+    log_message "Erro: dos2unix não está instalado."
+fi
+
+log_header "Ajustando permissões"
+chmod -R 777 /opt/darkapi >/dev/null 2>&1
+chmod 777 /etc/systemd/system/ModuloSinc.service /etc/systemd/system/ModuloCron.service >/dev/null 2>&1
+
+log_header "Reiniciando e habilitando serviços"
+systemctl daemon-reload >/dev/null 2>&1
+systemctl enable ModuloSinc.service >/dev/null 2>&1
+systemctl start ModuloSinc.service >/dev/null 2>&1
+systemctl restart ModuloSinc.service >/dev/null 2>&1
+systemctl enable ModuloCron.service >/dev/null 2>&1
+systemctl start ModuloCron.service >/dev/null 2>&1
+systemctl restart ModuloCron.service >/dev/null 2>&1
+log_message "✅ Serviço ModuloSinc.service e ModuloCron.service reiniciados e habilitados com sucesso."
+
+log_header "Executando scripts adicionais"
+sleep 1
+log_message "Executando CorrecaoV2"
+sudo python3 /opt/darkapi/CorrecaoV2.py >> $LOG_FILE 2>&1
+
+log_header "Limpando arquivos temporários"
+# Remover apenas o arquivo ZIP, se existir
+if [ -f "$ZIP_FILE" ]; then
+    rm "$ZIP_FILE"
+    log_message "✅ Arquivo $ZIP_FILE removido."
+else
+    log_message "⚠️ Arquivo $ZIP_FILE não encontrado para remoção."
+fi
+
+# Não remover o próprio script em execução!
+log_message "⚠️ O script de instalação foi preservado para uso futuro"
+
+log_header "INSTALAÇÃO E CONFIGURAÇÃO CONCLUÍDAS"
+echo "comandoenviadocomsucesso"
