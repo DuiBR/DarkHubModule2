@@ -127,12 +127,12 @@ download_file() {
 }
 
 # Baixar arquivos essenciais
-download_file "modulo.zip" "$ZIP_FILE"
+download_file "modulos.zip" "$ZIP_FILE"
 zip_status=$?
 
 # Verificação crítica do arquivo zip
 if [ $zip_status -ne 0 ]; then
-    log_message "❌❌❌ FALHA CRÍTICA: Não foi possível baixar modulo.zip após múltiplas tentativas"
+    log_message "❌❌❌ FALHA CRÍTICA: Não foi possível baixar modulos.zip após múltiplas tentativas"
     log_message "⚠️ Por favor, verifique sua conexão com a internet e tente novamente"
     log_message "⚠️ Se o problema persistir, contate o suporte"
     exit 1
