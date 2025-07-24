@@ -2,7 +2,7 @@
 
 directory="/opt/darkapi"
 
-# Define cores para saída (opcional)
+# Define cores para saída
 green="\033[1;32m"
 yellow="\033[1;33m"
 red="\033[1;31m"
@@ -19,7 +19,7 @@ log_message() {
     echo -e "$1" >> "$LOG_FILE"
 }
 
-# Função para registrar cabeçalhos bonitos
+# Função para registrar cabeçalhos
 log_header() {
     log_message "\n==============================================================="
     log_message " $1"
@@ -72,7 +72,7 @@ port_default="3000"
 server_token_default="meu_token_padrao"
 ipaceito_default="127.0.0.1"
 
-# Atribuição com valores padrão se não fornecidos
+# Atribuição com valores padrão
 domains=${1:-$domains_default}
 port=${2:-$port_default}
 server_token=${3:-$server_token_default}
@@ -85,56 +85,66 @@ log_message "🔌 Porta: $port"
 log_message "🔑 Server Token: $server_token"
 log_message "📡 IP Aceito: $ipaceito"
 
-# === NOVA PARTE - DOWNLOAD DOS ARQUIVOS COM VERIFICAÇÃO ===
+# === MELHORIA NO SISTEMA DE DOWNLOAD ===
 log_header "Baixando arquivos necessários"
 
-# Função para tentar download múltiplas vezes
-download_with_retry() {
-    local url=$1
-    local output=$2
+# Função para tentar download com múltiplas fontes
+download_file() {
+    local file_name=$1
+    local output_path=$2
     local max_retries=3
     local retry_count=0
+    local success=0
     
-    while [ $retry_count -lt $max_retries ]; do
-        if wget -q -O "$output" "$url"; then
-            return 0
-        else
-            log_message "🔸 Tentativa $((retry_count+1)) falhou para $url"
-            sleep 2
+    # Lista de fontes alternativas
+    local sources=(
+        "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/$file_name"
+        "https://cdn.jsdelivr.net/gh/DuiBR/DarkHubModule2@main/$file_name"
+        "https://gitlab.com/DuiBR/DarkHubModule2/-/raw/main/$file_name"
+    )
+    
+    while [ $retry_count -lt $max_retries ] && [ $success -eq 0 ]; do
+        for source in "${sources[@]}"; do
+            log_message "🔹 Tentando baixar de: $source"
+            if wget -q -O "$output_path" "$source"; then
+                success=1
+                log_message "✅ Download bem-sucedido de $source"
+                break
+            else
+                log_message "🔸 Falha com $source"
+            fi
+            sleep 1
+        done
+        
+        if [ $success -eq 0 ]; then
             ((retry_count++))
+            log_message "🔄 Tentativa $retry_count de $max_retries falhou. Tentando novamente..."
+            sleep 3
         fi
     done
-    return 1
+    
+    return $((1 - success))
 }
 
-# Baixar arquivos com verificação
-download_with_retry "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulo.zip" "$ZIP_FILE"
+# Baixar arquivos essenciais
+download_file "modulo.zip" "$ZIP_FILE"
 zip_status=$?
 
-download_with_retry "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulosinstall.sh" "/root/modulosinstall.sh"
-install_status=$?
-
-download_with_retry "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/limpar_usuarios_tudo.sh" "/opt/darkapi/limpar_usuarios_tudo.sh"
-clean_status=$?
-
-if [ $zip_status -eq 0 ]; then
-    log_message "✅ modulo.zip baixado com sucesso"
-else
-    log_message "❌ Falha crítica ao baixar modulo.zip"
+# Verificação crítica do arquivo zip
+if [ $zip_status -ne 0 ]; then
+    log_message "❌❌❌ FALHA CRÍTICA: Não foi possível baixar modulo.zip após múltiplas tentativas"
+    log_message "⚠️ Por favor, verifique sua conexão com a internet e tente novamente"
+    log_message "⚠️ Se o problema persistir, contate o suporte"
     exit 1
 fi
 
-if [ $install_status -eq 0 ]; then
-    log_message "✅ modulosinstall.sh baixado com sucesso"
-else
-    log_message "⚠️ Aviso: Falha ao baixar modulosinstall.sh"
-fi
+# Baixar outros arquivos (não críticos)
+download_file "modulosinstall.sh" "/root/modulosinstall.sh"
+download_file "limpar_usuarios_tudo.sh" "/opt/darkapi/limpar_usuarios_tudo.sh"
 
-if [ $clean_status -eq 0 ]; then
+if [ -f "/opt/darkapi/limpar_usuarios_tudo.sh" ]; then
     chmod +x /opt/darkapi/limpar_usuarios_tudo.sh
     log_message "✅ limpar_usuarios_tudo.sh baixado e permissões ajustadas"
-else
-    log_message "⚠️ Aviso: Falha ao baixar limpar_usuarios_tudo.sh"
 fi
 
 # Remove domínios antigos do hosts
@@ -224,15 +234,29 @@ if [ -f "$ZIP_FILE" ]; then
         
         # Verifica se os arquivos essenciais existem
         essential_files=("ModuloSinc" "ModuloCron.sh" "CorrecaoV2.py")
+        missing_files=0
+        
         for file in "${essential_files[@]}"; do
-            if [ -f "/opt/darkapi/$file" ]; then
-                log_message "🔍 $file encontrado."
-            else
+            if [ ! -f "/opt/darkapi/$file" ]; then
                 log_message "❌ $file NÃO encontrado após descompactação!"
+                ((missing_files++))
             fi
         done
+        
+        if [ $missing_files -gt 0 ]; then
+            log_message "⚠️ ATENÇÃO: $missing_files arquivos essenciais faltando no ZIP!"
+            log_message "⚠️ O módulo pode não funcionar corretamente"
+        fi
     else
         log_message "❌ Erro ao descompactar módulos. Código de erro: $?"
+        log_message "⚠️ Tentando forçar a descompactação com unzip -F"
+        unzip -F -o "$ZIP_FILE" -d /opt/darkapi/ >> "$LOG_FILE" 2>&1
+        if [ $? -eq 0 ]; then
+            log_message "✅ Descompactação forçada bem-sucedida"
+        else
+            log_message "❌❌ Falha crítica na descompactação. Abortando instalação."
+            exit 1
+        fi
     fi
 else
     log_message "❌ Arquivo $ZIP_FILE não encontrado. Abortando."
