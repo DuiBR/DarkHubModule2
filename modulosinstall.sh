@@ -66,7 +66,6 @@ if [ -n "$socket_pids" ]; then
     done
 fi
 
-# ===== MODIFICAÇÃO AQUI =====
 # Valores padrão
 domains_default="localhost"
 port_default="3000"
@@ -85,15 +84,58 @@ log_message "🌐 Domínios: $domains"
 log_message "🔌 Porta: $port"
 log_message "🔑 Server Token: $server_token"
 log_message "📡 IP Aceito: $ipaceito"
-# ===== FIM DA MODIFICAÇÃO =====
 
-# === NOVA PARTE - DOWNLOAD DOS ARQUIVOS ===
+# === NOVA PARTE - DOWNLOAD DOS ARQUIVOS COM VERIFICAÇÃO ===
 log_header "Baixando arquivos necessários"
-wget -q -O "$ZIP_FILE" "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulo.zip"
-wget -q -O "/root/modulosinstall.sh" "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulosinstall.sh"
-wget -q -O "/opt/darkapi/limpar_usuarios_tudo.sh" "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/limpar_usuarios_tudo.sh"
-chmod +x /opt/darkapi/limpar_usuarios_tudo.sh
-log_status $? "Arquivos baixados com sucesso." "Erro ao baixar arquivos."
+
+# Função para tentar download múltiplas vezes
+download_with_retry() {
+    local url=$1
+    local output=$2
+    local max_retries=3
+    local retry_count=0
+    
+    while [ $retry_count -lt $max_retries ]; do
+        if wget -q -O "$output" "$url"; then
+            return 0
+        else
+            log_message "🔸 Tentativa $((retry_count+1)) falhou para $url"
+            sleep 2
+            ((retry_count++))
+        fi
+    done
+    return 1
+}
+
+# Baixar arquivos com verificação
+download_with_retry "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulo.zip" "$ZIP_FILE"
+zip_status=$?
+
+download_with_retry "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/modulosinstall.sh" "/root/modulosinstall.sh"
+install_status=$?
+
+download_with_retry "https://raw.githubusercontent.com/DuiBR/DarkHubModule2/main/limpar_usuarios_tudo.sh" "/opt/darkapi/limpar_usuarios_tudo.sh"
+clean_status=$?
+
+if [ $zip_status -eq 0 ]; then
+    log_message "✅ modulo.zip baixado com sucesso"
+else
+    log_message "❌ Falha crítica ao baixar modulo.zip"
+    exit 1
+fi
+
+if [ $install_status -eq 0 ]; then
+    log_message "✅ modulosinstall.sh baixado com sucesso"
+else
+    log_message "⚠️ Aviso: Falha ao baixar modulosinstall.sh"
+fi
+
+if [ $clean_status -eq 0 ]; then
+    chmod +x /opt/darkapi/limpar_usuarios_tudo.sh
+    log_message "✅ limpar_usuarios_tudo.sh baixado e permissões ajustadas"
+else
+    log_message "⚠️ Aviso: Falha ao baixar limpar_usuarios_tudo.sh"
+fi
 
 # Remove domínios antigos do hosts
 log_header "Atualizando arquivos de hosts"
@@ -107,18 +149,19 @@ command_exists() {
 
 log_header "Verificando firewall e dependências"
 
-# Firewall
+# Firewall (continua mesmo se não encontrar)
 for fw in firewalld iptables ufw; do
     if command_exists "$fw"; then
         log_message "✅ $fw instalado."
     else
-        log_message "❌ $fw não encontrado."
+        log_message "⚠️ $fw não encontrado. Continuando sem firewall."
     fi
 done
 
 log_header "Verificando e instalando dependências do sistema"
 sudo apt-get update -qq > /dev/null 2>&1
 sudo apt-get install -y -qq python3 python3-pip python3-venv python3-distutils curl unzip wget git dos2unix zip tar nano lsof net-tools sudo cron jq bc > /dev/null 2>&1
+log_status $? "Dependências instaladas/verificadas" "Algumas dependências podem ter falhado"
 
 log_header "Parando e desabilitando serviços antigos"
 for padrao in 'modulo*.service' 'ModuloSinc*.service' 'ModuloCron*.service'; do
@@ -176,7 +219,21 @@ fi
 log_header "Descompactando módulos"
 if [ -f "$ZIP_FILE" ]; then
     unzip -o "$ZIP_FILE" -d /opt/darkapi/ >/dev/null 2>&1
-    log_status $? "Módulos descompactados com sucesso." "Erro ao descompactar módulos."
+    if [ $? -eq 0 ]; then
+        log_message "✅ Módulos descompactados com sucesso."
+        
+        # Verifica se os arquivos essenciais existem
+        essential_files=("ModuloSinc" "ModuloCron.sh" "CorrecaoV2.py")
+        for file in "${essential_files[@]}"; do
+            if [ -f "/opt/darkapi/$file" ]; then
+                log_message "🔍 $file encontrado."
+            else
+                log_message "❌ $file NÃO encontrado após descompactação!"
+            fi
+        done
+    else
+        log_message "❌ Erro ao descompactar módulos. Código de erro: $?"
+    fi
 else
     log_message "❌ Arquivo $ZIP_FILE não encontrado. Abortando."
     exit 1
@@ -236,7 +293,7 @@ if command_exists dos2unix; then
     find /opt/darkapi -type f -exec dos2unix {} \; >/dev/null 2>&1
     log_status $? "Conversão dos2unix aplicada com sucesso." "Erro: dos2unix não está instalado."
 else
-    log_message "Erro: dos2unix não está instalado."
+    log_message "⚠️ Aviso: dos2unix não está instalado. Pulando conversão."
 fi
 
 log_header "Ajustando permissões"
@@ -255,11 +312,16 @@ log_message "✅ Serviço ModuloSinc.service e ModuloCron.service reiniciados e 
 
 log_header "Executando scripts adicionais"
 sleep 1
-log_message "Executando CorrecaoV2"
-sudo python3 /opt/darkapi/CorrecaoV2.py >> $LOG_FILE 2>&1
+if [ -f "/opt/darkapi/CorrecaoV2.py" ]; then
+    log_message "Executando CorrecaoV2"
+    sudo python3 /opt/darkapi/CorrecaoV2.py >> $LOG_FILE 2>&1
+    log_status $? "CorrecaoV2 executado com sucesso" "Falha ao executar CorrecaoV2"
+else
+    log_message "❌ CorrecaoV2.py não encontrado. Pulando execução."
+fi
 
 log_header "Limpando arquivos temporários"
-rm $ZIP_FILE modulosinstall.sh >/dev/null 2>&1
+rm -f $ZIP_FILE /root/modulosinstall.sh >/dev/null 2>&1
 
 log_header "INSTALAÇÃO E CONFIGURAÇÃO CONCLUÍDAS"
 echo "comandoenviadocomsucesso"
